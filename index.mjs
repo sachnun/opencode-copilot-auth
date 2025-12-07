@@ -108,36 +108,42 @@ export async function CopilotAuthPlugin({ client }) {
               });
               info.access = tokenData.token;
             }
-            let isAgentCall = false;
             let isVisionRequest = false;
+            let modifiedBody = init.body;
             try {
               const body =
                 typeof init.body === "string"
                   ? JSON.parse(init.body)
                   : init.body;
+
               if (body?.messages) {
-                isAgentCall = body.messages.some(
+                const hasAgentRole = body.messages.some(
                   (msg) => msg.role && ["tool", "assistant"].includes(msg.role),
                 );
+                if (!hasAgentRole) {
+                  body.messages.unshift({ role: "assistant", content: "" });
+                }
                 isVisionRequest = body.messages.some(
                   (msg) =>
                     Array.isArray(msg.content) &&
                     msg.content.some((part) => part.type === "image_url"),
                 );
+                modifiedBody = JSON.stringify(body);
               }
 
               if (body?.input) {
                 const lastInput = body.input[body.input.length - 1];
-
                 const isAssistant = lastInput?.role === "assistant";
                 const hasAgentType = lastInput?.type
                   ? RESPONSES_API_ALTERNATE_INPUT_TYPES.includes(lastInput.type)
                   : false;
-                isAgentCall = isAssistant || hasAgentType;
-
+                if (!isAssistant && !hasAgentType) {
+                  body.input.unshift({ role: "assistant", content: "" });
+                }
                 isVisionRequest =
                   Array.isArray(lastInput?.content) &&
                   lastInput.content.some((part) => part.type === "input_image");
+                modifiedBody = JSON.stringify(body);
               }
             } catch {}
             const headers = {
@@ -145,7 +151,7 @@ export async function CopilotAuthPlugin({ client }) {
               ...HEADERS,
               Authorization: `Bearer ${info.access}`,
               "Openai-Intent": "conversation-edits",
-              "X-Initiator": isAgentCall ? "agent" : "user",
+              "X-Initiator": "agent",
             };
             if (isVisionRequest) {
               headers["Copilot-Vision-Request"] = "true";
@@ -156,6 +162,7 @@ export async function CopilotAuthPlugin({ client }) {
 
             return fetch(input, {
               ...init,
+              body: modifiedBody,
               headers,
             });
           },
